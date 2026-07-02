@@ -1,0 +1,242 @@
+# =============================================================================
+# NetworkView - an enterprise-shaped lab for studying TCP/TLS, HTTP(S), MITM,
+# certificate signing, and load balancing, hands-on with a packet sniffer.
+#
+# Traffic path:
+#   client -> lb-edge (TLS termination) -> frontend x2
+#          -> lb-int -> middleware x2 -> lb-int -> backend x2 -> postgres
+#
+# Control plane:  manager (versions + traffic) | logviewer | sniffer (+ tcpdump)
+# =============================================================================
+
+x-app-health: &app-health
+  healthcheck:
+    test: ["CMD", "python", "-c",
+           "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/healthz'); "]
+    interval: 10s
+    timeout: 3s
+    retries: 6
+    start_period: 10s
+
+services:
+  # --- PKI: build Root CA -> Intermediate CA -> leaf certs (runs once) -------
+  pki:
+    build: ./pki
+    volumes:
+      - pki-data:/pki/out
+    networks: [labnet]
+
+  # --- Database (tier 3 data store) ------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - dbdata:/var/lib/postgresql/data
+    networks: [labnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d orders"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Backend (tier 3 app; only service that talks to the DB) ---------------
+  backend:
+    build:
+      context: ./services
+      dockerfile: backend/Dockerfile
+    environment:
+      APP_NAME: backend
+      APP_VERSION: v1
+      DB_DSN: "host=db port=5432 dbname=orders user=app password=app"
+    volumes:
+      - control:/control
+      - logs:/logs
+    networks: [labnet]
+    depends_on:
+      db: {condition: service_healthy}
+      pki: {condition: service_completed_successfully}
+    deploy:
+      replicas: 2
+    <<: *app-health
+
+  # --- Middleware (tier 2 BFF; frontend<->backend, plaintext internal) -------
+  middleware:
+    build:
+      context: ./services
+      dockerfile: middleware/Dockerfile
+    environment:
+      APP_NAME: middleware
+      BACKEND_URL: "http://lb-int:8082"
+    volumes:
+      - control:/control
+      - logs:/logs
+    networks: [labnet]
+    depends_on:
+      pki: {condition: service_completed_successfully}
+    deploy:
+      replicas: 2
+    <<: *app-health
+
+  # --- Frontend (tier 1 web UI) ----------------------------------------------
+  frontend:
+    build:
+      context: ./services
+      dockerfile: frontend/Dockerfile
+    environment:
+      APP_NAME: frontend
+      MIDDLEWARE_URL: "http://lb-int:8081"
+    volumes:
+      - control:/control
+      - logs:/logs
+    networks: [labnet]
+    depends_on:
+      pki: {condition: service_completed_successfully}
+    deploy:
+      replicas: 2
+    <<: *app-health
+
+  # --- Edge LTM: TLS termination + HTTP/TLS1.2/TLS1.3 comparison -------------
+  lb-edge:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./lb/edge/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - pki-data:/certs:ro
+    networks: [labnet]
+    depends_on:
+      pki: {condition: service_completed_successfully}
+    ports:
+      - "8080:80"      # HTTP        -> http://localhost:8080
+      - "8443:443"     # HTTPS TLS13 -> https://localhost:8443
+      - "8444:8443"    # HTTPS TLS12 -> https://localhost:8444
+      - "8405:8404"    # LTM stats   -> http://localhost:8405
+
+  # --- Internal LTM: middleware pool (:8081) + backend pool (:8082) ----------
+  lb-int:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./lb/int/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks: [labnet]
+    ports:
+      - "8404:8404"    # internal LTM stats -> http://localhost:8404
+
+  # --- Manager: control plane (version switch, traffic gen, fault inject) ----
+  manager:
+    build:
+      context: ./services
+      dockerfile: manager/Dockerfile
+    environment:
+      APP_NAME: manager
+      CA_BUNDLE: /certs/ca-chain.crt
+    volumes:
+      - control:/control
+      - logs:/logs
+      - pki-data:/certs:ro
+    networks: [labnet]
+    depends_on:
+      pki: {condition: service_completed_successfully}
+    ports:
+      - "9000:8000"    # http://localhost:9000
+    <<: *app-health
+
+  # --- Log viewer -------------------------------------------------------------
+  logviewer:
+    build:
+      context: ./services
+      dockerfile: logviewer/Dockerfile
+    environment:
+      APP_NAME: logviewer
+    volumes:
+      - logs:/logs
+    networks: [labnet]
+    ports:
+      - "9001:8000"    # http://localhost:9001
+    <<: *app-health
+
+  # --- Packet sniffer (tshark reader over the shared pcap volume) ------------
+  sniffer:
+    build:
+      context: ./services
+      dockerfile: sniffer/Dockerfile
+    environment:
+      APP_NAME: sniffer
+      PCAP_DIR: /pcaps
+    volumes:
+      - pcaps:/pcaps:ro
+      - logs:/logs
+    networks: [labnet]
+    ports:
+      - "9002:8000"    # http://localhost:9002
+    <<: *app-health
+
+  # --- Portal: single-page launcher for every browser console ----------------
+  portal:
+    build:
+      context: ./services
+      dockerfile: portal/Dockerfile
+    environment:
+      APP_NAME: portal
+      CA_BUNDLE: /certs/ca-chain.crt
+    volumes:
+      - logs:/logs
+      - pki-data:/certs:ro
+    networks: [labnet]
+    depends_on:
+      pki: {condition: service_completed_successfully}
+    ports:
+      - "9003:8000"    # http://localhost:9003  <-- start here
+    <<: *app-health
+
+  # --- tcpdump capture sidecars (share a target's network namespace) ---------
+  cap-edge:
+    build: ./capture
+    environment: {CAP_NAME: edge}
+    network_mode: "service:lb-edge"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - pcaps:/pcaps
+    depends_on: [lb-edge]
+
+  cap-internal:
+    build: ./capture
+    environment: {CAP_NAME: internal}
+    network_mode: "service:lb-int"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - pcaps:/pcaps
+    depends_on: [lb-int]
+
+  cap-db:
+    build: ./capture
+    environment: {CAP_NAME: db}
+    network_mode: "service:db"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - pcaps:/pcaps
+    depends_on: [db]
+
+  # --- MITM attacker (opt-in: docker compose --profile mitm up -d mitm) ------
+  mitm:
+    image: mitmproxy/mitmproxy:latest
+    command: >
+      mitmdump --mode reverse:https://lb-edge:443 --listen-host 0.0.0.0
+      --listen-port 8080 --set ssl_insecure=true --flow-detail 2
+    networks: [labnet]
+    depends_on: [lb-edge]
+    ports:
+      - "8090:8080"    # https://localhost:8090  (see mitm/README.md)
+    profiles: [mitm]
+
+networks:
+  labnet:
+    driver: bridge
+
+volumes:
+  pki-data:
+  control:
+  logs:
+  pcaps:
+  dbdata:

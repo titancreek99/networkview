@@ -1,0 +1,10 @@
+# Keep shell scripts and configs LF even when checked out on Windows, so their
+# shebangs are exec'able inside Linux containers (CRLF -> "no such file" on exec).
+*.sh        text eol=lf
+entrypoint.sh text eol=lf
+gen-certs.sh  text eol=lf
+*.cfg       text eol=lf
+*.cnf       text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.sql       text eol=lf
