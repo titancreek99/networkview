@@ -20,6 +20,7 @@ real TLS handshakes, and real certificates flow through a realistic topology.
 | **Load balancing (LTM)** | HAProxy stats at `:8405`/`:8404`, replicas round-robined |
 
 Full write-ups are in [`docs/`](docs/). Guided exercises: [`docs/labs.md`](docs/labs.md).
+Driving it all from the admin console: [`docs/admin-guide.md`](docs/admin-guide.md).
 
 ## Architecture
 
