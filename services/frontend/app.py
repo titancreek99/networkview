@@ -13,32 +13,61 @@ from flask import jsonify, render_template_string
 
 sys.path.insert(0, "/app")
 from common.appkit import make_app, HOSTNAME, APP_VERSION
+from common.theme import BASE_CSS, topbar
 
 app, log = make_app()
 
 MIDDLEWARE_URL = os.environ.get("MIDDLEWARE_URL", "http://lb-int:8081")
 
-PAGE = """<!doctype html><html><head><title>NetworkView Shop</title>
-<style>body{font-family:system-ui,sans-serif;max-width:820px;margin:2rem auto;padding:0 1rem}
-pre{background:#0b1021;color:#7fdbff;padding:1rem;border-radius:8px;overflow:auto}
-h1{color:#111}.pill{background:#eef;padding:2px 8px;border-radius:10px;font-size:.8rem}</style>
-</head><body>
-<h1>NetworkView Shop <span class="pill">served by {{host}} ({{ver}})</span></h1>
-<p>This is the <b>frontend</b>. It calls the <b>middleware</b>, which calls the
-<b>backend</b> (via internal LB), which reads <b>Postgres</b>.</p>
-<p><a href="/orders">/orders (fetch through the whole stack)</a></p>
-<h3>Live data</h3><pre id="out">loading...</pre>
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NetworkView — Shop</title><style>{{ css|safe }}
+.path{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 18px;font-size:13px}
+.path .hop{background:var(--surface-2);border:1px solid var(--border-2);border-radius:8px;padding:5px 11px}
+.path .sep{color:var(--faint)}
+</style></head><body>
+{{ topbar|safe }}
+<div class="wrap">
+  <section class="hero">
+    <h1>NetworkView <span class="grad">Shop</span></h1>
+    <p>You're looking at the <b>frontend</b> tier
+       <span class="tag">served by {{host}} · {{ver}}</span>. Reload to watch the
+       edge load balancer round-robin you across replicas.</p>
+    <div class="path">
+      <span class="hop">browser</span><span class="sep">──TLS──▶</span>
+      <span class="hop">lb-edge</span><span class="sep">─▶</span>
+      <span class="hop">frontend</span><span class="sep">─http─▶</span>
+      <span class="hop">middleware</span><span class="sep">─▶</span>
+      <span class="hop">backend</span><span class="sep">─▶</span>
+      <span class="hop">postgres</span>
+    </div>
+  </section>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0">Live data — full stack round trip</h3>
+      <button class="btn primary" onclick="load()">↻ Fetch /orders</button>
+    </div>
+    <pre id="out">loading…</pre>
+  </div>
+  <div style="height:40px"></div>
+</div>
 <script>
-fetch('/orders').then(r=>r.json()).then(d=>{
-  document.getElementById('out').textContent = JSON.stringify(d,null,2);
-}).catch(e=>{document.getElementById('out').textContent='error: '+e;});
+function load(){
+  document.getElementById('out').textContent='loading…';
+  fetch('/orders').then(r=>r.json()).then(d=>{
+    document.getElementById('out').textContent = JSON.stringify(d,null,2);
+  }).catch(e=>{document.getElementById('out').textContent='error: '+e;});
+}
+load();
 </script>
 </body></html>"""
 
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE, host=HOSTNAME, ver=APP_VERSION)
+    return render_template_string(PAGE, css=BASE_CSS, topbar=topbar(""),
+                                  host=HOSTNAME, ver=APP_VERSION)
 
 
 @app.get("/orders")

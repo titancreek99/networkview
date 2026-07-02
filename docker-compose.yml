@@ -172,6 +172,24 @@ services:
       - "9002:8000"    # http://localhost:9002
     <<: *app-health
 
+  # --- Portal: single-page launcher for every browser console ----------------
+  portal:
+    build:
+      context: ./services
+      dockerfile: portal/Dockerfile
+    environment:
+      APP_NAME: portal
+      CA_BUNDLE: /certs/ca-chain.crt
+    volumes:
+      - logs:/logs
+      - pki-data:/certs:ro
+    networks: [labnet]
+    depends_on:
+      pki: {condition: service_completed_successfully}
+    ports:
+      - "9003:8000"    # http://localhost:9003  <-- start here
+    <<: *app-health
+
   # --- tcpdump capture sidecars (share a target's network namespace) ---------
   cap-edge:
     build: ./capture

@@ -19,6 +19,7 @@ from flask import jsonify, render_template_string, request
 
 sys.path.insert(0, "/app")
 from common.appkit import make_app
+from common.theme import BASE_CSS, topbar
 
 app, log = make_app()
 PCAP_DIR = os.environ.get("PCAP_DIR", "/pcaps")
@@ -88,32 +89,50 @@ def tshark_detail(path, frame_no):
         return f"error: {exc}"
 
 
-PAGE = """<!doctype html><html><head><title>NetworkView Sniffer</title>
-<style>body{font-family:system-ui,sans-serif;max-width:1200px;margin:1rem auto;padding:0 1rem}
-select,button{padding:.4rem;margin:.2rem}
-table{width:100%;border-collapse:collapse;font-size:.82rem}
-td,th{border-bottom:1px solid #eee;padding:3px 6px;text-align:left}
-tr:hover{background:#eef;cursor:pointer}
-pre{background:#0b1021;color:#9cdcfe;padding:1rem;border-radius:8px;max-height:460px;overflow:auto;font-size:.78rem}
-.tag{font-size:.7rem;background:#eef;border-radius:8px;padding:1px 6px}</style></head><body>
-<h1>NetworkView — Packet Sniffer</h1>
-<div>Capture: <select id="pcap"></select>
-View: <select id="preset">
-<option value="all">all</option>
-<option value="tcp_handshake">TCP handshake (SYN/ACK)</option>
-<option value="tls_handshake">TLS handshake</option>
-<option value="tls_clienthello">TLS ClientHello</option>
-<option value="tls_serverhello">TLS ServerHello</option>
-<option value="http">HTTP (cleartext)</option>
-<option value="postgres">Postgres</option>
-<option value="dns">DNS</option></select>
-<button onclick="load()">decode</button>
-<span class="tag">click a row for full dissection (cipher suites, versions, cert)</span></div>
-<table><thead><tr><th>#</th><th>t</th><th>src</th><th>dst</th><th>proto</th>
-<th>ports</th><th>flags</th><th>info</th></tr></thead><tbody id="rows"></tbody></table>
-<h3>Packet detail</h3><pre id="detail">select a packet…</pre>
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NetworkView — Sniffer</title><style>{{ css|safe }}
+#rows tr{cursor:pointer} #rows td{font-family:var(--mono);font-size:12px}
+.proto{font-weight:700}
+.flag{color:var(--accent)}
+</style></head><body>
+{{ topbar|safe }}
+<div class="wrap">
+  <section class="hero"><h1>Packet <span class="grad">Sniffer</span></h1>
+    <p>Decode the tcpdump captures. Pick a view to isolate the TCP handshake, the
+       TLS ClientHello/ServerHello, or cleartext HTTP. Click any row for the full
+       dissection (cipher suites, versions, certificate).</p></section>
+
+  <div class="panel">
+    <div class="toolbar">
+      <label>Capture</label><select id="pcap" style="min-width:260px"></select>
+      <label>View</label>
+      <select id="preset">
+        <option value="all">all packets</option>
+        <option value="tcp_handshake">TCP handshake (SYN/ACK)</option>
+        <option value="tls_handshake">TLS handshake</option>
+        <option value="tls_clienthello">TLS ClientHello</option>
+        <option value="tls_serverhello">TLS ServerHello</option>
+        <option value="http">HTTP (cleartext)</option>
+        <option value="postgres">Postgres</option>
+        <option value="dns">DNS</option>
+      </select>
+      <button class="btn primary" onclick="load()">Decode</button>
+      <span class="badge muted" id="count" style="margin-left:auto"></span>
+    </div>
+    <div style="overflow:auto;max-height:52vh">
+      <table><thead><tr><th>#</th><th>t</th><th>src</th><th>dst</th><th>proto</th>
+      <th>ports</th><th>flags</th><th>info</th></tr></thead><tbody id="rows"></tbody></table>
+    </div>
+  </div>
+
+  <div class="section-title">Packet detail</div>
+  <div class="panel"><pre id="detail" style="max-height:460px">select a packet…</pre></div>
+  <div style="height:40px"></div>
+</div>
 <script>
 let cur='';
+function esc(s){return (s+'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function pcaps(){return fetch('/api/captures').then(r=>r.json()).then(d=>{
   const s=document.getElementById('pcap');const c=s.value;
   s.innerHTML=d.map(f=>`<option value="${f.name}">${f.name} (${(f.size/1024).toFixed(0)}KB)</option>`).join('');
@@ -122,10 +141,12 @@ function load(){
   cur=document.getElementById('pcap').value;
   const p=new URLSearchParams({file:cur,preset:document.getElementById('preset').value,limit:400});
   fetch('/api/decode?'+p).then(r=>r.json()).then(d=>{
+    document.getElementById('count').textContent=(d.rows||[]).length+' packets';
     document.getElementById('rows').innerHTML=(d.rows||[]).map(r=>
-      `<tr onclick="detail(${r.no})"><td>${r.no}</td><td>${(+r.time).toFixed(3)}</td>
-       <td>${r.src}</td><td>${r.dst}</td><td>${r.proto}</td>
-       <td>${r.sport}&rarr;${r.dport}</td><td>${r.flags}</td><td>${r.info}</td></tr>`).join('');
+      `<tr onclick="detail(${r.no})"><td>${r.no}</td><td class="faint">${(+r.time).toFixed(3)}</td>
+       <td>${esc(r.src)}</td><td>${esc(r.dst)}</td><td class="proto">${esc(r.proto)}</td>
+       <td>${esc(r.sport)}&rarr;${esc(r.dport)}</td><td class="flag">${esc(r.flags)}</td>
+       <td class="muted">${esc(r.info)}</td></tr>`).join('');
     if(d.stderr)document.getElementById('detail').textContent=d.stderr;});}
 function detail(n){fetch('/api/detail?'+new URLSearchParams({file:cur,frame:n}))
   .then(r=>r.json()).then(d=>{document.getElementById('detail').textContent=d.detail;});}
@@ -135,7 +156,7 @@ pcaps();setInterval(pcaps,4000);
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE)
+    return render_template_string(PAGE, css=BASE_CSS, topbar=topbar("sniffer"))
 
 
 @app.get("/api/captures")

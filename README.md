@@ -45,6 +45,7 @@ Driving it all from the admin console: [`docs/admin-guide.md`](docs/admin-guide.
                                           │  psql
                                        postgres                    (data)
 
+  portal (launcher): http://localhost:9003  — cards + live health for all consoles
   control plane:  manager :9000   |   logviewer :9001   |   sniffer :9002
   packet capture: tcpdump sidecars on lb-edge, lb-int and db → shared pcap vol
 ```
@@ -58,7 +59,10 @@ in the sniffer and understand why "internal traffic is trusted" is a myth.
 # 1. Build and start the whole stack (Docker + Compose v2/v5 required)
 docker compose up -d --build
 
-# 2. Open the consoles
+# 2. Open the PORTAL — one page that launches everything, with live health:
+#    Portal ................ http://localhost:9003   <-- START HERE
+#
+#    (or go direct to any console)
 #    Frontend app .......... http://localhost:8080         (HTTP)
 #                            https://localhost:8443        (HTTPS / TLS 1.3)
 #                            https://localhost:8444        (HTTPS / TLS 1.2)
@@ -94,6 +98,8 @@ services/
   manager/      control plane: versions, traffic gen, fault injection
   logviewer/    aggregated JSON log console
   sniffer/      tshark front-end over captured pcaps
+  portal/       single-page launcher for every console (live health)
+  common/theme  shared dark design system used by all consoles
 lb/edge/        HAProxy edge config (TLS termination, HTTP/1.2/1.3)
 lb/int/         HAProxy internal config (two pools)
 capture/        tcpdump sidecar image

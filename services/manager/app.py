@@ -20,6 +20,7 @@ from flask import jsonify, render_template_string, request
 
 sys.path.insert(0, "/app")
 from common.appkit import make_app, ControlStore
+from common.theme import BASE_CSS, topbar
 
 app, log = make_app()
 control = ControlStore()
@@ -69,34 +70,74 @@ def traffic_loop():
         time.sleep(1.0 / rps)
 
 
-PAGE = """<!doctype html><html><head><title>NetworkView Manager</title>
-<style>body{font-family:system-ui,sans-serif;max-width:900px;margin:1.5rem auto;padding:0 1rem}
-button{padding:.5rem .8rem;margin:.2rem;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
-button.alt{background:#059669}button.warn{background:#dc2626}
-.card{border:1px solid #ddd;border-radius:10px;padding:1rem;margin:1rem 0}
-pre{background:#0b1021;color:#7fdbff;padding:1rem;border-radius:8px;overflow:auto}
-label{display:inline-block;min-width:150px}</style></head><body>
-<h1>NetworkView — Control Plane</h1>
+PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NetworkView — Manager</title><style>{{ css|safe }}
+.kpi{display:flex;gap:10px;flex-wrap:wrap}
+.kpi .box{flex:1;min-width:120px;background:var(--bg-2);border:1px solid var(--border);
+  border-radius:10px;padding:12px 14px}
+.kpi .n{font-size:22px;font-weight:700} .kpi .l{color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.ver-pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--border-2);background:var(--surface-2)}
+</style></head><body>
+{{ topbar|safe }}
+<div class="wrap">
+  <section class="hero">
+    <h1>Control <span class="grad">Plane</span></h1>
+    <p>Drive every experiment from here. Each control produces a visible effect in
+       the sniffer, logs, or LB stats — see the
+       <a href="https://github.com/titancreek99/networkview/blob/main/docs/admin-guide.md" target="_blank" rel="noopener">admin guide</a>.</p>
+  </section>
 
-<div class="card"><h3>Backend version (blue/green)</h3>
-<button onclick="setver('v1')">Activate v1</button>
-<button class="alt" onclick="setver('v2')">Activate v2 (adds tax field)</button>
-<span id="ver"></span></div>
+  <div class="grid">
+    <div class="panel">
+      <h3>Backend version <span class="ver-pill" id="ver">—</span></h3>
+      <p class="muted">Blue/green switch, applied fleet-wide on the next request.</p>
+      <div class="btn-row">
+        <button class="btn primary" onclick="setver('v1')">Activate v1</button>
+        <button class="btn ok" onclick="setver('v2')">Activate v2 · +tax field</button>
+      </div>
+    </div>
 
-<div class="card"><h3>Traffic generator</h3>
-<button class="alt" onclick="traffic(true)">Start</button>
-<button class="warn" onclick="traffic(false)">Stop</button>
-<div><label>Requests/sec</label><input id="rps" type="number" value="3" min="1" max="50">
-<button onclick="setrps()">set</button></div>
-<p>Mix = HTTP + HTTPS(TLS1.3) + HTTPS(TLS1.2). Watch the sniffer + LB stats.</p></div>
+    <div class="panel">
+      <h3>Traffic generator</h3>
+      <p class="muted">Mixes HTTP + HTTPS(TLS 1.3) + HTTPS(TLS 1.2) through the edge LB.</p>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn ok" onclick="traffic(true)">▶ Start</button>
+        <button class="btn err" onclick="traffic(false)">■ Stop</button>
+      </div>
+      <div class="row">
+        <label>Requests/sec</label>
+        <input id="rps" type="number" value="3" min="1" max="50" style="width:90px">
+        <button class="btn" onclick="setrps()">Set</button>
+      </div>
+    </div>
 
-<div class="card"><h3>Fault injection (backend)</h3>
-<div><label>Latency ms</label><input id="lat" type="number" value="0"></div>
-<div><label>Error rate 0..1</label><input id="err" type="number" step="0.1" value="0"></div>
-<button onclick="setfault()">Apply</button></div>
+    <div class="panel">
+      <h3>Fault injection <span class="tag">backend</span></h3>
+      <p class="muted">Watch latency/errors ripple up through the tiers.</p>
+      <div class="row" style="margin-bottom:8px">
+        <label style="min-width:110px">Latency ms</label>
+        <input id="lat" type="number" value="0" style="width:110px">
+      </div>
+      <div class="row" style="margin-bottom:12px">
+        <label style="min-width:110px">Error rate 0–1</label>
+        <input id="err" type="number" step="0.1" value="0" style="width:110px">
+      </div>
+      <button class="btn warn" onclick="setfault()">Apply</button>
+    </div>
+  </div>
 
-<div class="card"><h3>State &amp; traffic stats</h3>
-<button onclick="refresh()">refresh</button><pre id="state">...</pre></div>
+  <div class="section-title">Live state &amp; traffic</div>
+  <div class="panel">
+    <div class="kpi" id="kpi" style="margin-bottom:14px"></div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" onclick="refresh()">↻ Refresh</button>
+      <span class="badge muted" id="tstate"></span>
+    </div>
+    <pre id="state">…</pre>
+  </div>
+  <div style="height:40px"></div>
+</div>
 
 <script>
 const j = (u,m,b)=>fetch(u,{method:m||'GET',headers:{'Content-Type':'application/json'},
@@ -106,16 +147,25 @@ function traffic(on){j('/api/traffic','POST',{running:on}).then(refresh);}
 function setrps(){j('/api/traffic','POST',{rps:+document.getElementById('rps').value}).then(refresh);}
 function setfault(){j('/api/fault','POST',{backend_latency_ms:+document.getElementById('lat').value,
   backend_error_rate:+document.getElementById('err').value}).then(refresh);}
+function box(n,l){return `<div class="box"><div class="n">${n}</div><div class="l">${l}</div></div>`;}
 function refresh(){j('/api/state').then(d=>{
   document.getElementById('state').textContent=JSON.stringify(d,null,2);
-  document.getElementById('ver').textContent=' active: '+d.state.active_backend_version;});}
+  document.getElementById('ver').textContent=d.state.active_backend_version;
+  const s=d.traffic_stats||{}, bp=s.by_proto||{};
+  document.getElementById('kpi').innerHTML =
+    box(s.sent||0,'sent')+box(s.ok||0,'ok')+box(s.err||0,'err')+
+    box(bp.http||0,'HTTP')+box(bp.https13||0,'TLS 1.3')+box(bp.https12||0,'TLS 1.2');
+  const t=d.state.traffic||{};
+  document.getElementById('tstate').textContent =
+    (t.running?('● generating at '+t.rps+' rps'):'○ traffic stopped');
+});}
 refresh();setInterval(refresh,3000);
 </script></body></html>"""
 
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE)
+    return render_template_string(PAGE, css=BASE_CSS, topbar=topbar("manager"))
 
 
 @app.get("/api/state")
