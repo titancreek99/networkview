@@ -1,0 +1,16 @@
+# Local trust anchors / certs extracted from the running stack
+ca-chain.crt
+*.crt
+*.key
+*.pem
+*.csr
+*.srl
+!pki/**            # (there are no committed certs; certs are generated at runtime)
+
+# Python
+__pycache__/
+*.pyc
+
+# Captures / logs pulled locally
+*.pcap
+*.log
