@@ -17,8 +17,9 @@ mkdir -p /pcaps
 echo "[capture:${NAME}] starting on all interfaces, filter='${FILTER}'"
 
 # -U  flush each packet (so the sniffer can read files while they grow)
-# -G  rotate every 120s,  -W 12 keep a 12-file ring (~24 min of history)
+# -G  rotate every 30s,  -W 20 keep a 20-file ring (~10 min of history) so a
+#     freshly-completed, decodable capture shows up in the sniffer quickly
 # -s 0 full packet payloads so we can read TLS ClientHello + HTTP bodies
-exec tcpdump -i any -U -s 0 -G 120 -W 12 \
+exec tcpdump -i any -U -s 0 -G 30 -W 20 \
     -w "/pcaps/${NAME}_%Y-%m-%d_%H-%M-%S.pcap" \
     ${FILTER}

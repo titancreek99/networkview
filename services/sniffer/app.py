@@ -120,6 +120,13 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
       <button class="btn primary" onclick="load()">Decode</button>
       <span class="badge muted" id="count" style="margin-left:auto"></span>
     </div>
+    <div id="empty" class="panel" style="display:none;text-align:center;color:var(--muted);background:var(--bg-2)">
+      ⏳ No captures yet. Start traffic in the
+      <a href="http://localhost:9000/" target="_blank" rel="noopener">Manager</a>
+      — the tcpdump sidecars write a decodable <code>.pcap</code> within ~30s, then it
+      appears here automatically. (The load balancers' health checks also produce
+      background traffic to capture.)
+    </div>
     <div style="overflow:auto;max-height:52vh">
       <table><thead><tr><th>#</th><th>t</th><th>src</th><th>dst</th><th>proto</th>
       <th>ports</th><th>flags</th><th>info</th></tr></thead><tbody id="rows"></tbody></table>
@@ -131,12 +138,23 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
   <div style="height:40px"></div>
 </div>
 <script>
-let cur='';
+let cur='', autoloaded=false;
 function esc(s){return (s+'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function pcaps(){return fetch('/api/captures').then(r=>r.json()).then(d=>{
   const s=document.getElementById('pcap');const c=s.value;
+  const empty=document.getElementById('empty');
+  if(!d.length){
+    s.innerHTML='<option value="">— no captures yet —</option>';
+    empty.style.display='block';
+    document.getElementById('count').textContent='waiting for captures…';
+    return;
+  }
+  empty.style.display='none';
   s.innerHTML=d.map(f=>`<option value="${f.name}">${f.name} (${(f.size/1024).toFixed(0)}KB)</option>`).join('');
-  if(c)s.value=c;});}
+  if(c)s.value=c;
+  // First time captures appear, auto-decode the newest so the page isn't blank.
+  if(!autoloaded){ autoloaded=true; load(); }
+});}
 function load(){
   cur=document.getElementById('pcap').value;
   const p=new URLSearchParams({file:cur,preset:document.getElementById('preset').value,limit:400});
