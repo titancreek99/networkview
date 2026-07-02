@@ -41,11 +41,36 @@ FIELDS = ["frame.number", "frame.time_relative", "ip.src", "ip.dst",
           "tcp.flags.str", "_ws.col.Info"]
 
 
+CAP_SOURCES = ["edge", "internal", "db"]  # matches CAP_NAME of each sidecar
+
+
 def _safe_pcap(name: str) -> str | None:
     if not name or "/" in name or ".." in name:
         return None
     path = os.path.join(PCAP_DIR, name)
     return path if os.path.isfile(path) else None
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def capture_health():
+    """Per-sidecar diagnostics from the status/err files the capture writes."""
+    out = []
+    for s in CAP_SOURCES:
+        pcaps = glob.glob(os.path.join(PCAP_DIR, f"{s}_*.pcap"))
+        size = sum(os.path.getsize(p) for p in pcaps if os.path.exists(p))
+        out.append({
+            "name": s, "pcaps": len(pcaps), "bytes": size,
+            "started": os.path.exists(os.path.join(PCAP_DIR, f"_{s}.status")),
+            "err": _read(os.path.join(PCAP_DIR, f"_{s}.err")).strip()[-300:],
+        })
+    return out
 
 
 def list_pcaps():
@@ -102,6 +127,9 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
     <p>Decode the tcpdump captures. Pick a view to isolate the TCP handshake, the
        TLS ClientHello/ServerHello, or cleartext HTTP. Click any row for the full
        dissection (cipher suites, versions, certificate).</p></section>
+
+  <div class="section-title">Capture sources <span class="faint" style="text-transform:none;letter-spacing:0">— tcpdump sidecars</span></div>
+  <div class="grid" id="caphealth" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr));margin-bottom:16px"></div>
 
   <div class="panel">
     <div class="toolbar">
@@ -168,7 +196,17 @@ function load(){
     if(d.stderr)document.getElementById('detail').textContent=d.stderr;});}
 function detail(n){fetch('/api/detail?'+new URLSearchParams({file:cur,frame:n}))
   .then(r=>r.json()).then(d=>{document.getElementById('detail').textContent=d.detail;});}
-pcaps();setInterval(pcaps,4000);
+function health(){fetch('/api/capture-health').then(r=>r.json()).then(d=>{
+  document.getElementById('caphealth').innerHTML=d.map(c=>{
+    const up = c.pcaps>0, cls = up?'up':(c.started?'warn':'down');
+    const state = up?`${c.pcaps} pcaps · ${(c.bytes/1024).toFixed(0)} KB`
+                    :(c.started?'started, no packets yet':'not running');
+    return `<div class="card" style="padding:12px 14px">
+      <h3 style="font-size:14px;margin-bottom:4px"><span class="dot ${cls}"></span>cap-${c.name}</h3>
+      <div class="muted" style="font-size:12.5px">${state}</div>
+      ${c.err?`<div class="faint" style="font-size:11px;margin-top:6px;font-family:var(--mono);white-space:pre-wrap">${esc(c.err)}</div>`:''}
+    </div>`;}).join('');});}
+pcaps();health();setInterval(()=>{pcaps();health();},4000);
 </script></body></html>"""
 
 
@@ -180,6 +218,11 @@ def index():
 @app.get("/api/captures")
 def api_captures():
     return jsonify(list_pcaps())
+
+
+@app.get("/api/capture-health")
+def api_capture_health():
+    return jsonify(capture_health())
 
 
 @app.get("/api/decode")
